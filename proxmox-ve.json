@@ -1,119 +1,44 @@
 {
   "variables": {
-    "disk_size": "15375",
     "iso_url": "http://download.proxmox.com/iso/proxmox-ve_6.2-1.iso",
-    "iso_checksum": "sha256:d8fb3cfba19d38aa0c05452a954150f96e3ee455a36d52427aa26e6906fb8bff"
+    "iso_checksum": "file:http://download.proxmox.com/iso/SHA256SUMS"
   },
   "builders": [
     {
-      "name": "proxmox-ve-amd64-libvirt",
+      "vm_name": "proxmox-libvirt-amd64",
       "type": "qemu",
       "accelerator": "kvm",
-      "cpus": 2,
-      "memory": 2048,
       "qemuargs": [
         ["-cpu", "host"]
       ],
       "headless": true,
-      "http_directory": ".",
       "format": "qcow2",
-      "disk_size": "{{user `disk_size`}}",
-      "disk_interface": "virtio-scsi",
-      "disk_discard": "unmap",
+      "disk_size": "50G",
+      "disk_interface": "virtio",
       "iso_url": "{{user `iso_url`}}",
       "iso_checksum": "{{user `iso_checksum`}}",
       "ssh_username": "root",
       "ssh_password": "vagrant",
-      "ssh_timeout": "60m",
+      "ssh_timeout": "20m",
+      "cpus": 4,
+      "memory": 4096,
+      "net_device": "virtio-net",
       "boot_wait": "5s",
       "boot_command": [
         "<enter>",
-        "<wait10><wait10><wait10><wait10><wait10>",
+        "<wait30s>",
         "<enter><wait>",
         "<enter><wait>",
-        "United S<wait>t<wait>a<wait>t<wait>e<wait>s<wait><enter><wait><tab><wait>",
-        "<tab><wait>",
-        "<tab><wait>",
-        "<tab><wait>",
-        "<enter><wait5>",
-        "vagrant<tab><wait>",
-        "vagrant<tab><wait>",
-        "pve@example.com<tab><wait>",
-        "<tab><wait>",
-        "<enter><wait5>",
-        "pve.example.com<tab><wait>",
-        "<tab><wait>",
-        "<tab><wait>",
-        "<tab><wait>",
-        "<tab><wait>",
-        "<tab><wait>",
-        "<enter><wait5>",
-        "<enter><wait5>",
-        "<wait10><wait10><wait10><wait10><wait10><wait10>",
-        "<wait10><wait10><wait10><wait10><wait10><wait10>",
-        "<wait10><wait10><wait10><wait10><wait10><wait10>",
-        "<wait10><wait10><wait10><wait10><wait10><wait10>",
-        "<enter>"
-      ],
-      "shutdown_command": "poweroff"
-    },
-    {
-      "name": "proxmox-ve-amd64-virtualbox",
-      "type": "virtualbox-iso",
-      "guest_os_type": "Debian_64",
-      "guest_additions_mode": "attach",
-      "headless": true,
-      "vboxmanage": [
-        ["modifyvm", "{{.Name}}", "--memory", "2048"],
-        ["modifyvm", "{{.Name}}", "--cpus", "2"],
-        ["modifyvm", "{{.Name}}", "--vram", "16"],
-        ["modifyvm", "{{.Name}}", "--graphicscontroller", "vmsvga"],
-        ["modifyvm", "{{.Name}}", "--audio", "none"],
-        ["modifyvm", "{{.Name}}", "--nictype1", "82540EM"],
-        ["modifyvm", "{{.Name}}", "--nictype2", "82540EM"],
-        ["modifyvm", "{{.Name}}", "--nictype3", "82540EM"],
-        ["modifyvm", "{{.Name}}", "--nictype4", "82540EM"]
-      ],
-      "vboxmanage_post": [
-        ["storagectl", "{{.Name}}", "--name", "IDE Controller", "--remove"]
-      ],
-      "disk_size": "{{user `disk_size`}}",
-      "hard_drive_interface": "sata",
-      "hard_drive_discard": true,
-      "iso_url": "{{user `iso_url`}}",
-      "iso_checksum": "{{user `iso_checksum`}}",
-      "ssh_username": "root",
-      "ssh_password": "vagrant",
-      "ssh_timeout": "60m",
-      "boot_wait": "5s",
-      "boot_command": [
+        "Belarus<tab><tab><tab><tab><tab>",
         "<enter>",
-        "<wait10><wait10><wait10><wait10><wait10>",
-        "<enter><wait>",
-        "<enter><wait>",
-        "<enter><wait>",
-        "United S<wait>t<wait>a<wait>t<wait>e<wait>s<wait><enter><wait><tab><wait>",
-        "<tab><wait>",
-        "<tab><wait>",
-        "<tab><wait>",
-        "<enter><wait5>",
-        "vagrant<tab><wait>",
-        "vagrant<tab><wait>",
-        "pve@example.com<tab><wait>",
-        "<tab><wait>",
-        "<enter><wait5>",
-        "pve.example.com<tab><wait>",
-        "<tab><wait>",
-        "<tab><wait>",
-        "<tab><wait>",
-        "<tab><wait>",
-        "<tab><wait>",
-        "<enter><wait5>",
-        "<enter><wait5>",
-        "<wait10><wait10><wait10><wait10><wait10><wait10>",
-        "<wait10><wait10><wait10><wait10><wait10><wait10>",
-        "<wait10><wait10><wait10><wait10><wait10><wait10>",
-        "<wait10><wait10><wait10><wait10><wait10><wait10>",
+        "vagrant<tab>",
+        "vagrant<tab>",
+        "pve@example.com<tab><tab>",
+        "<enter>",
+        "pve.example.com<tab><tab><tab><tab><tab><tab>",
+        "<enter>",
+        "<enter>",
+        "<wait2m>",
         "<enter>"
       ],
       "shutdown_command": "poweroff"
@@ -122,18 +47,8 @@
   "provisioners": [
     {
       "type": "shell",
-      "expect_disconnect": true,
-      "scripts": [
-        "upgrade.sh",
-        "provision.sh"
-      ]
+      "script": "./provision.sh"
     }
   ],
-  "post-processors": [
-    {
-      "type": "vagrant",
-      "output": "{{.BuildName}}.box",
-      "vagrantfile_template": "Vagrantfile.template"
-    }
-  ]
+  "post-processors": ["vagrant"]
 }

@@ -1,33 +1,67 @@
-#!/bin/bash
-# abort this script when a command fails or a unset variable is used.
-set -eu
-# echo all the executed commands.
-set -x
+#!/usr/bin/env bash
+set -eux
 
 # configure apt for non-interactive mode.
 export DEBIAN_FRONTEND=noninteractive
+
+# switch to the non-enterprise repository.
+# see https://pve.proxmox.com/wiki/Package_Repositories
+rm -f /etc/apt/sources.list.d/pve-enterprise.list
+echo 'deb http://download.proxmox.com/debian/pve buster pve-no-subscription' > /etc/apt/sources.list.d/pve.list
+
+# switch the apt mirror to Belarus.
+sed -i -E 's,ftp.debian,ftp.by.debian,' /etc/apt/sources.list
+
+# upgrade.
+apt-get update
+apt-get dist-upgrade -y
+
+# use traditional interface names like eth0 instead of enp0s3
+# by disabling the predictable network interface names.
+# disable to show boot menu
+sed -i -E 's,^(GRUB_CMDLINE_LINUX=).+,\1"net.ifnames=0",' /etc/default/grub
+sed -i -E 's,^(GRUB_TIMEOUT),\1=0,' /etc/default/grub
+update-grub
+
+# configure the network for working in a vagrant environment.
+# NB proxmox has created the vmbr0 bridge and placed eth0 on the it, but
+#    that will not work, vagrant expects to control eth0. so we have to
+#    undo the proxmox changes.
+cat > /etc/network/interfaces <<'EOF'
+auto lo
+iface lo inet loopback
+
+iface eth0 inet manual
+
+auto vmbr0
+iface vmbr0 inet dhcp
+    bridge_ports eth0
+    bridge_stp off
+    bridge_fd 0
+EOF
+
+# set the timezone.
+timedatectl set-timezone Europe/Minsk
 
 # remove old kernel packages.
 # NB as of pve 5.2, there's a metapackage, pve-kernel-4.15, then there are the
 #    real kernels at pve-kernel-*-pve (these are the ones that are removed).
 pve_kernels=$(dpkg-query -f '${Package}\n' -W 'pve-kernel-*-pve')
 for pve_kernel in $pve_kernels; do
-    if [[ $pve_kernel != "pve-kernel-$(uname -r)" ]]; then
+    if [[ $pve_kernel == "pve-kernel-$(uname -r)" ]]; then
         apt-get remove -y --purge $pve_kernel
     fi
 done
 
-# create a group where sudo will not ask for a password.
-apt-get install -q -y sudo
-groupadd -r admin
-echo '%admin ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/admin
+# passwordless sudo for a vagrant user
+apt-get install -y sudo
+echo 'vagrant ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/vagrant
 
-# create the vagrant user. also allow access with the insecure vagrant public key.
-# NB vagrant will replace it on the first run.
-groupadd vagrant
-useradd -g vagrant -m vagrant -s /bin/bash
-gpasswd -a vagrant admin
-chmod 750 /home/vagrant
+# create the vagrant user
+useradd -G sudo -m -s /bin/bash vagrant
+echo 'vagrant:vagrant' | chpasswd
+
+# allow access with the insecure vagrant public key.
 install -d -m 700 /home/vagrant/.ssh
 pushd /home/vagrant/.ssh
 wget -q --no-check-certificate https://raw.githubusercontent.com/mitchellh/vagrant/master/keys/vagrant.pub -O authorized_keys
@@ -35,29 +69,10 @@ chmod 600 authorized_keys
 chown -R vagrant:vagrant .
 popd
 
-# install the Guest Additions.
-if [ -n "$(lspci | grep VirtualBox)" ]; then
-# install the VirtualBox Guest Additions.
-# this will be installed at /opt/VBoxGuestAdditions-VERSION.
-# NB You can unpack the VBoxLinuxAdditions.run file contents with:
-#       VBoxLinuxAdditions.run --target /tmp/VBoxLinuxAdditions.run.contents --noexec
-# NB REMOVE_INSTALLATION_DIR=0 is to fix a bug in VBoxLinuxAdditions.run.
-#    See http://stackoverflow.com/a/25943638.
-apt-get -y -q install gcc dkms pve-headers
-mkdir -p /mnt
-mount /dev/sr1 /mnt
-while [ ! -f /mnt/VBoxLinuxAdditions.run ]; do sleep 1; done
-# NB we ignore exit code 2 (cannot find vboxguest module) because of what
-#    seems to be a bug in VirtualBox 5.1.20. there isn't actually a problem
-#    loading the module.
-REMOVE_INSTALLATION_DIR=0 /mnt/VBoxLinuxAdditions.run --target /tmp/VBoxGuestAdditions || [ $? -eq 2 ]
-rm -rf /tmp/VBoxGuestAdditions
-umount /mnt
-eject /dev/sr1
-else
-# install the qemu-kvm Guest Additions.
-apt-get install -y qemu-guest-agent spice-vdagent
-fi
+# create proxmox user and attach Administrator role to him
+pveum useradd vagrant@pam
+pveum passwd vagrant@pam --password vagrant
+pveum aclmod / -user vagrant@pam -role Administrator
 
 # install rsync and sshfs to support shared folders in vagrant.
 apt-get install -y rsync sshfs
@@ -65,16 +80,8 @@ apt-get install -y rsync sshfs
 # disable the DNS reverse lookup on the SSH server. this stops it from
 # trying to resolve the client IP address into a DNS domain name, which
 # is kinda slow and does not normally work when running inside VB.
-echo UseDNS no >>/etc/ssh/sshd_config
-
-# make sure the ssh connections are properly closed when the system is shutdown.
-# NB this is needed for vagrant reload and vagrant-reload plugin.
-# NB this also needs UsePAM yes in sshd_config (which is already there).
-apt-get install -y libpam-systemd
-
-# disable the graphical terminal. its kinda slow and useless on a VM.
-sed -i -E 's,#(GRUB_TERMINAL\s*=).*,\1console,g' /etc/default/grub
-update-grub
+sed -E 's,^#*(UseDNS).+,\1 no,' /etc/ssh/sshd_config
+sed -E 's,^#*(GSSAPIAuthentication).+,\1 no,' /etc/ssh/sshd_config
 
 # reset the machine-id.
 # NB systemd will re-generate it on the next boot.
@@ -82,7 +89,7 @@ update-grub
 #    the DHCP server uses to (re-)assign the same or new client IP address.
 # see https://www.freedesktop.org/software/systemd/man/machine-id.html
 # see https://www.freedesktop.org/software/systemd/man/systemd-machine-id-setup.html
-echo '' >/etc/machine-id
+echo '' > /etc/machine-id
 rm -f /var/lib/dbus/machine-id
 
 # reset the random-seed.
@@ -106,11 +113,4 @@ apt-get -y autoremove
 apt-get -y clean
 
 # zero the free disk space -- for better compression of the box file.
-# NB prefer discard/trim (safer; faster) over creating a big zero filled file
-#    (somewhat unsafe as it has to fill the entire disk, which might trigger
-#    a disk (near) full alarm; slower; slightly better compression).
-if [ "$(lsblk -no DISC-GRAN $(findmnt -no SOURCE /) | awk '{print $1}')" != '0B' ]; then
-    fstrim -v /
-else
-    dd if=/dev/zero of=/EMPTY bs=1M || true && sync && rm -f /EMPTY
-fi
+fstrim -v /
